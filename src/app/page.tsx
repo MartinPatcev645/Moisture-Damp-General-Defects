@@ -261,29 +261,48 @@ async function callGeminiImageAnalysis(
     throw new Error((json?.error || "Image analysis failed.") + statusHint + retryHint);
   }
 
-  const json = (await res.json()) as { text?: string; error?: string };
-  const text = (json.text ?? "").trim() || "No analysis text returned from Gemini.";
+  const json = (await res.json()) as {
+    text?: string;
+    rawText?: string;
+    analysis?: any;
+    parseError?: string | null;
+    error?: string;
+  };
 
+  // Prefer server-parsed JSON (more reliable), but keep client fallback for older deployments.
+  const rawText = (json.rawText ?? json.text ?? "").trim() || "No analysis text returned from Gemini.";
+  const analysis = json.analysis ?? null;
+  if (analysis && typeof analysis === "object") {
+    return {
+      description: analysis.description,
+      relevance: analysis.relevance,
+      issues: analysis.issues,
+      improvements: analysis.improvements,
+      captions: Array.isArray(analysis.captions) ? analysis.captions : [],
+      rawText,
+      parseError: json.parseError ?? null,
+    };
+  }
+
+  // Fallback: parse client-side (in case the server hasn't been redeployed yet).
   let parsed: any;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(rawText);
   } catch {
-    const extracted = extractFirstJsonObject(text);
+    const extracted = extractFirstJsonObject(rawText);
     if (extracted) {
       try {
         parsed = JSON.parse(extracted);
       } catch {
         return {
-          rawText: text,
-          parseError:
-            "Failed to parse Gemini response as JSON. Showing raw text instead.",
+          rawText,
+          parseError: "Failed to parse Gemini response as JSON. Showing raw text instead.",
         };
       }
     } else {
       return {
-        rawText: text,
-        parseError:
-          "Failed to parse Gemini response as JSON. Showing raw text instead.",
+        rawText,
+        parseError: "Failed to parse Gemini response as JSON. Showing raw text instead.",
       };
     }
   }
@@ -294,7 +313,7 @@ async function callGeminiImageAnalysis(
     issues: parsed.issues,
     improvements: parsed.improvements,
     captions: Array.isArray(parsed.captions) ? parsed.captions : [],
-    rawText: text,
+    rawText,
     parseError: null,
   };
 }

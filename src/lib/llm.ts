@@ -227,7 +227,8 @@ export async function generateVisionWithFallback(args: {
               generationConfig: {
                 responseMimeType: "application/json",
                 temperature: 0.2,
-                maxOutputTokens: 2048,
+                // Vision JSON can occasionally get truncated; allow more room.
+                maxOutputTokens: 4096,
               },
             }),
           });

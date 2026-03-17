@@ -3,6 +3,51 @@ import { generateVisionWithFallback } from "@/lib/llm";
 
 export const runtime = "nodejs";
 
+function extractFirstJsonObject(text: string): string | null {
+  const cleaned = text.replace(/```json\s*/gi, "```").replace(/```/g, "").trim();
+  const start = cleaned.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0;
+  for (let i = start; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+    if (ch === "{") depth++;
+    if (ch === "}") depth--;
+    if (depth === 0) return cleaned.slice(start, i + 1);
+  }
+  return null;
+}
+
+type ImageAnalysisJson = {
+  description?: string;
+  relevance?: string;
+  issues?: string;
+  improvements?: string;
+  captions?: string[];
+};
+
+function parseImageAnalysis(text: string): { analysis: ImageAnalysisJson | null; parseError: string | null } {
+  const trimmed = text.trim();
+  try {
+    return { analysis: JSON.parse(trimmed) as ImageAnalysisJson, parseError: null };
+  } catch {
+    const extracted = extractFirstJsonObject(trimmed);
+    if (!extracted) {
+      return {
+        analysis: null,
+        parseError: "Failed to parse Gemini response as JSON. Showing raw text instead.",
+      };
+    }
+    try {
+      return { analysis: JSON.parse(extracted) as ImageAnalysisJson, parseError: null };
+    } catch {
+      return {
+        analysis: null,
+        parseError: "Failed to parse Gemini response as JSON. Showing raw text instead.",
+      };
+    }
+  }
+}
+
 export async function POST(req: Request) {
   let body: unknown;
   try {
@@ -35,7 +80,17 @@ export async function POST(req: Request) {
       mimeType,
       base64Data,
     });
-    return NextResponse.json({ text, provider, upstreamStatus, retryAfter });
+    const { analysis, parseError } = parseImageAnalysis(text);
+    // Keep `text` for backwards compatibility with older clients.
+    return NextResponse.json({
+      text,
+      rawText: text,
+      analysis,
+      parseError,
+      provider,
+      upstreamStatus,
+      retryAfter,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
     const upstreamStatus =
