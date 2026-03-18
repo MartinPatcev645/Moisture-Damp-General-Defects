@@ -51,13 +51,27 @@ export const translations: Record<AppLang, Dict> = {
     errorLabel: "ERRO",
     parsingNote: "NOTA DE PROCESSAMENTO",
     descriptionLabel: "DESCRIÇÃO",
+    diagnosisLabel: "DIAGNOSTICO",
     relevanceLabel: "RELEVÂNCIA",
+    severityIndicatorLabel: "SEVERIDADE",
     issuesLabel: "PROBLEMAS / INCONSISTÊNCIAS",
     improvementsLabel: "MELHORIAS",
     captionsLabel: "LEGENDAS",
     rawResponseLabel: "RESPOSTA BRUTA",
     statusLabel: "ESTADO",
     attachToBegin: "Anexe uma fotografia para iniciar a análise desta secção.",
+
+    rejectionTitle: "⚠️ Esta imagem nao esta relacionada com esta secao do inquerito",
+    rejectionHelp: (v) =>
+      `Esta imagem nao esta relacionada com ${String(v?.subject ?? "")}. Consulte o guia "O que fotografar" acima para tipos de fotografia aceites.`,
+
+    // Photo guidance panel
+    photoGuideTitle: "O que fotografar",
+    photoGuideShow: "Mostrar guia",
+    photoGuideHide: "Ocultar guia",
+    photoGuideAcceptedHeading: "FOTOGRAFIAS ACEITES",
+    photoGuideNotAcceptedHeading: "NÃO ACEITES",
+    photoGuideTipHeading: "DICA DO FOTOGRAFISTA",
 
     rateLimitReachedRetryIn: (v) => `Limite de taxa atingido. Tente novamente em ${v?.secs}s.`,
     rateLimitRetrying: (v) =>
@@ -115,13 +129,27 @@ export const translations: Record<AppLang, Dict> = {
     errorLabel: "ERROR",
     parsingNote: "PARSING NOTE",
     descriptionLabel: "DESCRIPTION",
+    diagnosisLabel: "DIAGNOSIS",
     relevanceLabel: "RELEVANCE",
+    severityIndicatorLabel: "SEVERITY",
     issuesLabel: "ISSUES / MISMATCHES",
     improvementsLabel: "IMPROVEMENTS",
     captionsLabel: "CAPTIONS",
     rawResponseLabel: "RAW RESPONSE",
     statusLabel: "STATUS",
     attachToBegin: "Attach a photo to begin analysis for this section.",
+
+    rejectionTitle: "⚠️ This image is not related to this survey section",
+    rejectionHelp: (v) =>
+      `This image is not related to ${String(v?.subject ?? "")}. See the 'What to photograph' guide above for accepted photo types.`,
+
+    // Photo guidance panel
+    photoGuideTitle: "What to photograph",
+    photoGuideShow: "Show guide",
+    photoGuideHide: "Hide guide",
+    photoGuideAcceptedHeading: "ACCEPTED PHOTOS",
+    photoGuideNotAcceptedHeading: "NOT ACCEPTED",
+    photoGuideTipHeading: "PHOTOGRAPHER TIP",
 
     rateLimitReachedRetryIn: (v) => `Rate limit reached. Please retry in ${v?.secs}s.`,
     rateLimitRetrying: (v) =>

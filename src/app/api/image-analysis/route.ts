@@ -18,17 +18,71 @@ function extractFirstJsonObject(text: string): string | null {
 }
 
 type ImageAnalysisJson = {
+  topicRelevant?: boolean;
+  rejectionReason?: string;
   description?: string;
+  diagnosis?: string;
   relevance?: string;
   issues?: string;
   improvements?: string;
+  severityIndicator?: string;
   captions?: string[];
 };
+
+function sanitizeParsedAnalysis(obj: any): ImageAnalysisJson | null {
+  if (!obj || typeof obj !== "object") return null;
+
+  const rawTopicRelevant = obj.topicRelevant;
+  const topicRelevant =
+    typeof rawTopicRelevant === "boolean"
+      ? rawTopicRelevant
+      : typeof rawTopicRelevant === "string"
+        ? rawTopicRelevant.toLowerCase() === "true"
+          ? true
+          : rawTopicRelevant.toLowerCase() === "false"
+            ? false
+            : undefined
+        : undefined;
+
+  // Enforce the strict rejection schema so downstream UI can't accidentally render analysis fields.
+  if (topicRelevant === false) {
+    return {
+      topicRelevant: false,
+      rejectionReason: typeof obj.rejectionReason === "string" ? obj.rejectionReason : undefined,
+    };
+  }
+
+  if (topicRelevant === true) {
+    return {
+      topicRelevant: true,
+      description: typeof obj.description === "string" ? obj.description : undefined,
+      diagnosis: typeof obj.diagnosis === "string" ? obj.diagnosis : undefined,
+      relevance: typeof obj.relevance === "string" ? obj.relevance : undefined,
+      issues: typeof obj.issues === "string" ? obj.issues : undefined,
+      improvements: typeof obj.improvements === "string" ? obj.improvements : undefined,
+      severityIndicator: typeof obj.severityIndicator === "string" ? obj.severityIndicator : undefined,
+      captions: Array.isArray(obj.captions) ? obj.captions.filter((x: any) => typeof x === "string") : undefined,
+    };
+  }
+
+  // Backward compatibility: older model versions may omit `topicRelevant`.
+  return {
+    description: typeof obj.description === "string" ? obj.description : undefined,
+    relevance: typeof obj.relevance === "string" ? obj.relevance : undefined,
+    issues: typeof obj.issues === "string" ? obj.issues : undefined,
+    improvements: typeof obj.improvements === "string" ? obj.improvements : undefined,
+    captions: Array.isArray(obj.captions) ? obj.captions.filter((x: any) => typeof x === "string") : undefined,
+    diagnosis: typeof obj.diagnosis === "string" ? obj.diagnosis : undefined,
+    severityIndicator: typeof obj.severityIndicator === "string" ? obj.severityIndicator : undefined,
+    rejectionReason: typeof obj.rejectionReason === "string" ? obj.rejectionReason : undefined,
+  };
+}
 
 function parseImageAnalysis(text: string): { analysis: ImageAnalysisJson | null; parseError: string | null } {
   const trimmed = text.trim();
   try {
-    return { analysis: JSON.parse(trimmed) as ImageAnalysisJson, parseError: null };
+    const parsed = JSON.parse(trimmed);
+    return { analysis: sanitizeParsedAnalysis(parsed), parseError: null };
   } catch {
     const extracted = extractFirstJsonObject(trimmed);
     if (!extracted) {
@@ -38,7 +92,8 @@ function parseImageAnalysis(text: string): { analysis: ImageAnalysisJson | null;
       };
     }
     try {
-      return { analysis: JSON.parse(extracted) as ImageAnalysisJson, parseError: null };
+      const parsed = JSON.parse(extracted);
+      return { analysis: sanitizeParsedAnalysis(parsed), parseError: null };
     } catch {
       return {
         analysis: null,
@@ -81,6 +136,12 @@ export async function POST(req: Request) {
       base64Data,
     });
     const { analysis, parseError } = parseImageAnalysis(text);
+
+    // Guarantee rejectionReason exists for rejected responses (one-sentence rejection guidance).
+    if (analysis?.topicRelevant === false && typeof analysis.rejectionReason !== "string") {
+      analysis.rejectionReason = "This photo does not clearly show building fabric or damp/moisture survey-relevant evidence for this section.";
+    }
+
     // Keep `text` for backwards compatibility with older clients.
     return NextResponse.json({
       text,

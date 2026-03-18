@@ -1,15 +1,20 @@
 "use client";
 
-import React, { ChangeEvent, useMemo, useRef, useState } from "react";
+import React, { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/i18n/useI18n";
 import type { AppLang } from "@/i18n/translations";
+import SectionPhotoGuide from "@/components/SectionPhotoGuide";
 import { getSteps, TOTAL_SECTIONS, type SurveyData, type SurveyValue, type Step } from "./surveySteps";
 
 type ImageAnalysisResult = {
+  topicRelevant?: boolean;
+  rejectionReason?: string;
   description?: string;
+  diagnosis?: string;
   relevance?: string;
   issues?: string;
   improvements?: string;
+  severityIndicator?: string;
   captions?: string[];
   rawText?: string;
   parseError?: string | null;
@@ -162,35 +167,175 @@ function buildSectionContext(step: Step, data: SurveyData): string {
   return lines.join("\n");
 }
 
+const SECTION_PROMPT: Array<{
+  subjectStrictForGuard: string;
+  context: string;
+  relevanceDefinition: string;
+}> = [
+  {
+    subjectStrictForGuard:
+      "exterior building shots showing facade/signage/street-level views (building type, floors, construction era) and any visible flood risk indicators",
+    context: "SECTION 1 — Basic Building Information. Confirm or challenge building type, construction type, number of floors, general condition, and note visible flood risk indicators.",
+    relevanceDefinition:
+      "RELEVANT: exterior building shots, facades, signage, street-level views showing building type/floors/construction era; any visible flood risk indicators (proximity to water, low elevation, flood marks on walls). REJECT: interiors with no building fabric visible, documents, people.",
+  },
+  {
+    subjectStrictForGuard:
+      "wall surfaces, floor edges, roof lines, window frames, air bricks/subfloor vents, DPC lines (visible physical/chemical damp-proof evidence)",
+    context:
+      "SECTION 2 — Building Characteristics. Identify wall material, visible DPC, glazing type, ground vs floor level, subfloor ventilation status, and wall thickness at openings/door reveals.",
+    relevanceDefinition:
+      "RELEVANT: close or mid-range images of wall surfaces/material, floor edges, roof lines, window frames, air bricks, subfloor vents, DPC lines. REJECT: anything with no building material visible.",
+  },
+  {
+    subjectStrictForGuard:
+      "external roof/gutters/downpipes/external walls/window-door junctions and base-of-wall ground level where water ingress routes and drainage failures are visible",
+    context:
+      "SECTION 3 — External Moisture Ingress Points. Focus on active/historic water ingress evidence, failed pointing/flashings, cracked render, bridging of DPC, soil raised above DPC, blocked/missing gutters, and poor drainage.",
+    relevanceDefinition:
+      "RELEVANT: roof, gutters, downpipes, external walls, window/door junctions, ground level at base of walls, landscaping near building, external plumbing. REJECT: interior shots, objects, people.",
+  },
+  {
+    subjectStrictForGuard:
+      "internal building fabric (walls/ceilings/floors/skirtings/corners) showing damp or mould evidence such as tide marks, efflorescence, condensation, peeling paint/plaster, or mould growth",
+    context:
+      "SECTION 4 — Internal Signs of Damp & Mould. Assess tide marks, mould growth (black/green), efflorescence (white salt crystals), peeling paint/plaster, condensation patterns, and staining indicative of rising/penetrating damp.",
+    relevanceDefinition:
+      "RELEVANT: internal walls/ceilings/floors/skirtings/corners, areas behind/under furniture, bathroom & kitchen walls with visible damp/mould evidence. REJECT: exterior shots, objects with no wall/floor/ceiling context.",
+  },
+  {
+    subjectStrictForGuard:
+      "visible moisture evidence with measurement context (moisture meter in use, thermal imaging/hygrometer/salt analysis readings, or close-up staining with a measurement reference like tape/scale card)",
+    context:
+      "SECTION 5 — Moisture Measurements & Profiling. Validate equipment used, note reading heights, and relate visible staining patterns to reported MC%/RH readings and moisture-rise height profiles.",
+    relevanceDefinition:
+      "RELEVANT: moisture meter in use on walls/floors, thermal imaging camera screens, hygrometer readings, salt analysis kits, close-up of staining with measurement reference (tape/scale card). REJECT: general room shots with no measurement equipment or moisture evidence visible.",
+  },
+  {
+    subjectStrictForGuard:
+      "visible ventilation/humidity/environment indicators in rooms (extractor fans, trickle vents/air bricks/MVHR/PIV units, condensation on windows or walls, humid-room indicators like steamy cooking, drying laundry indoors)",
+    context:
+      "SECTION 6 — Ventilation, Humidity & Environment. Assess ventilation adequacy, visible condensation sources, and occupancy-related humidity indicators.",
+    relevanceDefinition:
+      "RELEVANT: extractor fans, trickle vents, air bricks, MVHR/PIV units, condensation on windows or walls, drying laundry indoors, steamy kitchens, humid room indicators. REJECT: exterior landscape, documents, food, people only.",
+  },
+  {
+    subjectStrictForGuard:
+      "visible damp/moisture evidence patterns that help identify damp type (tide marks, localised patches, condensation damp, plumbing leak evidence such as pipe drips/ceiling stains below bathrooms)",
+    context:
+      "SECTION 7 — Types of Damp & Moisture Sources. Pattern recognition to support diagnosis: shape/height of tide marks, location relative to external features, salt deposits, and crack patterns aligned with moisture routes.",
+    relevanceDefinition:
+      "RELEVANT: any internal or external moisture evidence that helps confirm a damp type. REJECT: no moisture evidence visible, unrelated objects.",
+  },
+  {
+    subjectStrictForGuard:
+      "accessible timber/material elements (floor boards/skirting boards/joists/door frames/window boards/insulation or floor coverings lifted enough to show condition beneath) showing damp or rot evidence",
+    context:
+      "SECTION 8 — Timber & Material Defects. Assess wet/dry rot signs (colour/texture, dry-rot cuboid cracking, wet-rot fibrous), fungal growth, woodworm exit holes, saturated insulation, and damp under carpet/vinyl.",
+    relevanceDefinition:
+      "RELEVANT: floor boards, skirtings, accessible joists, door frames, window boards, insulation, lifted floor coverings revealing condition. REJECT: walls only, exterior shots, no timber or floor material visible.",
+  },
+  {
+    subjectStrictForGuard:
+      "structural elements and cracks (internal/external) and other structural-building defects like subsidence indicators, chimney stack defects, wall tie rust staining, and unsealed service penetrations",
+    context:
+      "SECTION 9 — Structural & Building Defects. Classify crack types, estimate width, and assess location relevance to structural concerns. Note chimney defects contributing to damp.",
+    relevanceDefinition:
+      "RELEVANT: cracks in walls/ceilings, subsidence signs, chimney stacks, diagonal cracking at window corners, stair-step cracking in brickwork, wall tie rust staining, unsealed service penetrations. REJECT: no cracks or structural elements visible; people/objects/documents.",
+  },
+  {
+    subjectStrictForGuard:
+      "evidence of prior damp treatments/repairs (DPC injection holes, waterproof render/tanking edges, membrane edges, sump pump installations, patched plaster, re-pointed sections) visible on building fabric",
+    context:
+      "SECTION 10 — History & Previous Interventions. Assess quality and current condition of prior treatments: DPC injection holes repointed, tanking integrity, and visible repair state.",
+    relevanceDefinition:
+      "RELEVANT: chemical DPC injection holes, waterproof render or tanking, visible membrane edges, sump pump installations, patched plaster or re-pointed sections. REJECT: general room shots with no prior-work evidence visible.",
+  },
+  {
+    subjectStrictForGuard:
+      "visible extent/severity of moisture damage (large mould coverage, significant staining, floor pooling, ceiling risk) with clear affected areas",
+    context:
+      "SECTION 11 — Risk Assessment & Impacts. Estimate visible extent (m2) and classify severity (low/moderate/high/severe). Note visible health hazards.",
+    relevanceDefinition:
+      "RELEVANT: images showing extent or severity of moisture damage (m2-scale mould coverage, significant structural staining, pooling, ceiling collapse risk). REJECT: minor/ambiguous images; people only; exteriors with no defect visible.",
+  },
+  {
+    subjectStrictForGuard:
+      "inspection activity/equipment in use (moisture meter, thermal camera, hygrometer, borescope, photographic log layout, DPC access, subfloor hatch open) showing method actually performed",
+    context:
+      "SECTION 12 — Inspections & Methods Used. Confirm methods/equipment used and comment on access quality and limitations visible in the photo.",
+    relevanceDefinition:
+      "RELEVANT: surveyor using equipment in field, equipment close-ups, photographic log layouts, visible DPC/subfloor access. REJECT: no inspection activity or equipment visible.",
+  },
+  {
+    subjectStrictForGuard:
+      "remediation work shown (new DPC, re-pointing, new gutters/downpipes, installed extractor fans, applied waterproof render, ground level adjustments, dehumidifier installation) or clear severe defect context justifying urgent action",
+    context:
+      "SECTION 13 — Safety, Recommendations & Remediation. Assess quality of remediation and adequacy of installed solutions; note any remaining risks.",
+    relevanceDefinition:
+      "RELEVANT: completed or in-progress remediation work visible on building fabric (before/after where possible). REJECT: administrative documents; images with no building fabric or remediation visible.",
+  },
+];
+
 function buildGeminiPrompt(step: Step, data: SurveyData, lang: AppLang): string {
   const answers = buildSectionContext(step, data);
   const outputLang =
     lang === "pt"
       ? "Portuguese (Portugal)"
       : "English";
+  const stepIndex0 = Math.max(0, Math.min(12, step.id - 1));
+  const sectionCfg = SECTION_PROMPT[stepIndex0] ?? SECTION_PROMPT[0];
+
   return [
-    "You are an expert damp and moisture building surveyor with 20 years of field experience.",
-    "You are reviewing a site photograph submitted as part of a professional damp survey report.",
-    `The section being surveyed is: ${step.title}`,
-    "The surveyor's current answers for this section are: ",
+    "You are a Chartered Building Surveyor and accredited damp and timber specialist with 20+ years of field experience.",
+    "You are reviewing a site photograph submitted as part of a professional damp and moisture survey.",
+    "Apply RICS-aligned assessment standards.",
+    "Use precise technical vocabulary.",
+    "Do not speculate beyond what is visible.",
+    "Where evidence is ambiguous, say so explicitly.",
+    "Never fabricate details not present in the image.",
+    "Output ONLY valid JSON. No preamble, no markdown fences.",
+    "",
+    "First-pass relevance check (mandatory): determine \"topicRelevant\" before any other analysis.",
+    "A relevant image must clearly show a built-environment element (surface/material/defect) and something directly observable/assessable by a damp/moisture surveyor, and it must match this section's scope.",
+    "Reject as topicRelevant=false: people, pets, vehicles, food, text documents, screenshots, logos, indoor furniture-only photos (no walls/floors/ceiling visible), outdoor landscapes with no building defect context, and anything clearly unrelated to built environment assessment.",
+    `SECTION BEING SURVEYED (Step ${step.id}/13): ${step.title}`,
+    sectionCfg.context,
+    "",
+    "The surveyor's current answers for this section are:",
     answers,
     "",
-    "Analyse the photo strictly in the context of damp, moisture, mould, structural defects,",
-    "timber condition, ventilation, or whatever is relevant to this section.",
+    "RELEVANCE DEFINITION (mandatory first-pass check):",
+    sectionCfg.relevanceDefinition,
+    "",
+    `If the image shows anything other than: ${sectionCfg.subjectStrictForGuard}, set "topicRelevant" to false and do not complete the rest of the analysis.`,
     "",
     `Write ALL JSON string values in ${outputLang}.`,
+    'Hard requirement: Your response MUST begin with the JSON key "topicRelevant" (first key in the object).',
     "",
-    "Be concise to avoid truncation: keep each string value under ~400 characters.",
-    "If something is not visible/unknown, say so briefly (do not invent details).",
+    'If topicRelevant is false, you MUST return ONLY this JSON object and no other fields/extra text:',
+    '{ "topicRelevant": false, "rejectionReason": "<one sentence why the image is not relevant>" }',
     "",
-    'Respond ONLY in this exact JSON format with no markdown, no code block, no preamble:',
+    "If topicRelevant is true, you MUST return the following JSON object exactly:",
     "{",
+    '  "topicRelevant": true,',
     '  "description": "...",',
+    '  "diagnosis": "...",',
     '  "relevance": "...",',
     '  "issues": "...",',
     '  "improvements": "...",',
+    '  "severityIndicator": "Low | Moderate | High | Severe | Cannot Determine",',
     '  "captions": ["...", "..."]',
     "}",
+    "",
+    "Constraints for accepted output:",
+    "- description: Neutral, factual description of exactly what is visible. Use technical surveying language. Reference materials, dimensions if estimable, location within the building. Max 120 words.",
+    "- diagnosis: Professional assessment of what the visual evidence indicates. Reference likely damp type, severity, probable cause. Use hedged language where uncertain. Max 100 words.",
+    "- relevance: How this image relates specifically to this survey section. Cross-reference any surveyor answers already recorded. Flag mismatches between stated answers and visual evidence. Max 80 words.",
+    "- issues: Bullet-style list (in a single string, use • separator) of defects, risks, uncertainties, or gaps visible in the image. Max 120 words.",
+    "- improvements: Additional photographic angles, equipment readings, or physical investigations to strengthen this section. Max 80 words.",
+    "- severityIndicator: Use one of the exact tokens Low, Moderate, High, Severe, Cannot Determine (do not translate tokens).",
+    "- captions: Two report-ready captions (past tense), professional and concise, alternative angle or focus.",
   ].join("\n");
 }
 
@@ -250,10 +395,14 @@ async function callGeminiImageAnalysis(
   const analysis = json.analysis ?? null;
   if (analysis && typeof analysis === "object") {
     return {
+      topicRelevant: analysis.topicRelevant,
+      rejectionReason: analysis.rejectionReason,
       description: analysis.description,
+      diagnosis: analysis.diagnosis,
       relevance: analysis.relevance,
       issues: analysis.issues,
       improvements: analysis.improvements,
+      severityIndicator: analysis.severityIndicator,
       captions: Array.isArray(analysis.captions) ? analysis.captions : [],
       rawText,
       parseError: json.parseError ?? null,
@@ -284,10 +433,14 @@ async function callGeminiImageAnalysis(
   }
 
   return {
+    topicRelevant: parsed.topicRelevant,
+    rejectionReason: parsed.rejectionReason,
     description: parsed.description,
+    diagnosis: parsed.diagnosis,
     relevance: parsed.relevance,
     issues: parsed.issues,
     improvements: parsed.improvements,
+    severityIndicator: parsed.severityIndicator,
     captions: Array.isArray(parsed.captions) ? parsed.captions : [],
     rawText,
     parseError: null,
@@ -307,6 +460,7 @@ function SectionImageAnalysis({
   );
   const retryTimersRef = useRef<Record<number, number>>({});
   const lastFileSigRef = useRef<Record<number, string>>({});
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const state: SectionImageState =
     sections[step.id] ?? {
@@ -339,6 +493,7 @@ function SectionImageAnalysis({
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
     const previewUrl = URL.createObjectURL(file);
     update({ file, previewUrl, result: null, error: null, nextAllowedAt: null });
     // Auto-run analysis on attach (with rate-limit guarding inside runAnalysis).
@@ -358,15 +513,26 @@ function SectionImageAnalysis({
 
     const base = state.result;
     const parts: Array<{
-      key: "description" | "relevance" | "issues" | "improvements" | "caption";
+      key:
+        | "description"
+        | "diagnosis"
+        | "relevance"
+        | "issues"
+        | "improvements"
+        | "rejectionReason"
+        | "caption";
       idx?: number;
       text: string;
     }> = [];
 
     if (base.description) parts.push({ key: "description", text: base.description });
+    if (base.diagnosis) parts.push({ key: "diagnosis", text: base.diagnosis });
     if (base.relevance) parts.push({ key: "relevance", text: base.relevance });
     if (base.issues) parts.push({ key: "issues", text: base.issues });
     if (base.improvements) parts.push({ key: "improvements", text: base.improvements });
+    if (base.topicRelevant === false && base.rejectionReason) {
+      parts.push({ key: "rejectionReason", text: base.rejectionReason });
+    }
     if (base.captions?.length) {
       base.captions.forEach((c, idx) => parts.push({ key: "caption", idx, text: c }));
     }
@@ -389,6 +555,8 @@ function SectionImageAnalysis({
       }
 
       const out: ImageAnalysisResult = {
+        topicRelevant: base.topicRelevant,
+        severityIndicator: base.severityIndicator,
         parseError: base.parseError ?? null,
       };
 
@@ -397,9 +565,11 @@ function SectionImageAnalysis({
         const p = parts[i];
         if (!p) return;
         if (p.key === "description") out.description = tr;
+        if (p.key === "diagnosis") out.diagnosis = tr;
         if (p.key === "relevance") out.relevance = tr;
         if (p.key === "issues") out.issues = tr;
         if (p.key === "improvements") out.improvements = tr;
+        if (p.key === "rejectionReason") out.rejectionReason = tr;
         if (p.key === "caption") captions[p.idx ?? captions.length] = tr;
       });
       if (captions.length) out.captions = captions.filter((c) => typeof c === "string" && c.length);
@@ -414,6 +584,22 @@ function SectionImageAnalysis({
       update({ translating: false, translateError: msg });
     }
   }
+
+  // If the user switches the header language (top-right EN/PT buttons),
+  // keep the already-generated image explanation text in sync.
+  useEffect(() => {
+    if (!state.result) return;
+    if (state.loading) return;
+    if (state.translating) return;
+
+    const targetLang = lang as AppLang;
+    if (state.outputLang !== targetLang) {
+      void translateResult(targetLang);
+    }
+    // Intentionally not depending on `translateResult` to avoid re-triggering
+    // from function identity changes; the guards above prevent loops.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lang, state.result, state.loading, state.translating, state.outputLang]);
 
   async function runAnalysis(existingFile?: File) {
     const file = existingFile ?? state.file;
@@ -431,15 +617,35 @@ function SectionImageAnalysis({
     try {
       lastFileSigRef.current[step.id] = fileSignature(file);
       const result = await callGeminiImageAnalysis(file, step, data, lang);
-      update({
-        result,
-        loading: false,
-        nextAllowedAt: null,
-        outputLang: lang,
-        translations: {},
-        translateError: null,
-        translating: false,
-      });
+      if (result?.topicRelevant === false) {
+        // Topic mismatch: clear the upload UI (file + preview) so the user can re-upload a relevant photo.
+        if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+
+        update({
+          file: null,
+          previewUrl: null,
+          result,
+          loading: false,
+          nextAllowedAt: null,
+          outputLang: lang,
+          translations: {},
+          translateError: null,
+          translating: false,
+          error: null,
+        });
+      } else {
+        update({
+          result,
+          loading: false,
+          nextAllowedAt: null,
+          outputLang: lang,
+          translations: {},
+          translateError: null,
+          translating: false,
+          error: null,
+        });
+      }
     } catch (err) {
       const raw =
         err instanceof Error ? err.message : t("unexpectedImageError");
@@ -475,6 +681,7 @@ function SectionImageAnalysis({
     if (state.previewUrl) {
       URL.revokeObjectURL(state.previewUrl);
     }
+    if (fileInputRef.current) fileInputRef.current.value = "";
     const prevTimer = retryTimersRef.current[step.id];
     if (prevTimer) window.clearTimeout(prevTimer);
     delete retryTimersRef.current[step.id];
@@ -518,10 +725,12 @@ function SectionImageAnalysis({
           {t("sectionPhotoAndAiCheckSub")}
         </p>
       </div>
+      <SectionPhotoGuide step={step.id - 1} />
       <div className="ds-img-actions button-group">
         <label className="ds-btn ds-btn-primary btn-primary ds-img-upload">
           {t("attachPhoto")}
           <input
+            ref={fileInputRef}
             type="file"
             accept="image/jpeg,image/png,image/webp"
             onChange={handleFileChange}
@@ -570,106 +779,147 @@ function SectionImageAnalysis({
                 <div className="ds-img-value">{state.error}</div>
               </div>
             ) : activeResult ? (
-              <>
-                <div className="ds-img-actions button-group" style={{ justifyContent: "flex-start", marginBottom: 10 }}>
-                  <span className="ds-img-lang-label" style={{ opacity: 0.8 }}>
-                    {outputLang === "en" ? "EN" : "PT"}
-                  </span>
-                  <span className="ai-sep" aria-hidden />
-                  <button
-                    type="button"
-                    className={`ds-btn ds-btn-ghost btn-ghost ${outputLang === "en" ? "selected" : ""}`}
-                    onClick={() => void translateResult("en")}
-                    disabled={state.translating || !activeResult}
-                    aria-pressed={outputLang === "en"}
-                    title="Translate to English"
-                  >
-                    EN
-                  </button>
-                  <button
-                    type="button"
-                    className={`ds-btn ds-btn-ghost btn-ghost ${outputLang === "pt" ? "selected" : ""}`}
-                    onClick={() => void translateResult("pt")}
-                    disabled={state.translating || !activeResult}
-                    aria-pressed={outputLang === "pt"}
-                    title="Traduzir para Português"
-                  >
-                    PT
-                  </button>
-                  {state.translating ? (
-                    <>
-                      <span className="ai-sep" aria-hidden />
-                      <span style={{ opacity: 0.85 }}>{outputLang === "pt" ? "A traduzir…" : "Translating…"}</span>
-                    </>
+              activeResult.topicRelevant === false ? (
+                <div className="ds-img-rejection-banner" role="alert">
+                  <div className="ds-img-rejection-title">{t("rejectionTitle")}</div>
+                  {displayedResult?.rejectionReason ? (
+                    <div className="ds-img-rejection-reason">{displayedResult.rejectionReason}</div>
                   ) : null}
+                  <div className="ds-img-rejection-help">
+                    {t("rejectionHelp", { subject: step.title })}
+                  </div>
                 </div>
-                {state.translateError ? (
-                  <div className="ds-img-field">
-                    <div className="ds-img-label">{t("errorLabel")}</div>
-                    <div className="ds-img-value">{state.translateError}</div>
+              ) : (
+                <>
+                  <div className="ds-img-actions button-group" style={{ justifyContent: "flex-start", marginBottom: 10 }}>
+                    <span className="ds-img-lang-label" style={{ opacity: 0.8 }}>
+                      {outputLang === "en" ? "EN" : "PT"}
+                    </span>
+                    <span className="ai-sep" aria-hidden />
+                    <button
+                      type="button"
+                      className={`ds-btn ds-btn-ghost btn-ghost ${outputLang === "en" ? "selected" : ""}`}
+                      onClick={() => void translateResult("en")}
+                      disabled={state.translating || !activeResult}
+                      aria-pressed={outputLang === "en"}
+                      title="Translate to English"
+                    >
+                      EN
+                    </button>
+                    <button
+                      type="button"
+                      className={`ds-btn ds-btn-ghost btn-ghost ${outputLang === "pt" ? "selected" : ""}`}
+                      onClick={() => void translateResult("pt")}
+                      disabled={state.translating || !activeResult}
+                      aria-pressed={outputLang === "pt"}
+                      title="Traduzir para Português"
+                    >
+                      PT
+                    </button>
+                    {state.translating ? (
+                      <>
+                        <span className="ai-sep" aria-hidden />
+                        <span style={{ opacity: 0.85 }}>{outputLang === "pt" ? "A traduzir…" : "Translating…"}</span>
+                      </>
+                    ) : null}
                   </div>
-                ) : null}
-                {displayedResult?.parseError ? (
-                  <div className="ds-img-field">
-                    <div className="ds-img-label">{t("parsingNote")}</div>
-                    <div className="ds-img-value">
-                      {displayedResult?.parseError}
+                  {state.translateError ? (
+                    <div className="ds-img-field">
+                      <div className="ds-img-label">{t("errorLabel")}</div>
+                      <div className="ds-img-value">{state.translateError}</div>
                     </div>
-                  </div>
-                ) : null}
-                {displayedResult?.description ? (
-                  <div className="ds-img-field">
-                    <div className="ds-img-label">{t("descriptionLabel")}</div>
-                    <div className="ds-img-value">
-                      {displayedResult.description}
+                  ) : null}
+                  {displayedResult?.parseError ? (
+                    <div className="ds-img-field">
+                      <div className="ds-img-label">{t("parsingNote")}</div>
+                      <div className="ds-img-value">
+                        {displayedResult?.parseError}
+                      </div>
                     </div>
-                  </div>
-                ) : null}
-                {displayedResult?.relevance ? (
-                  <div className="ds-img-field">
-                    <div className="ds-img-label">{t("relevanceLabel")}</div>
-                    <div className="ds-img-value">
-                      {displayedResult.relevance}
+                  ) : null}
+                  {displayedResult?.description ? (
+                    <div className="ds-img-field">
+                      <div className="ds-img-label">{t("descriptionLabel")}</div>
+                      <div className="ds-img-value">
+                        {displayedResult.description}
+                      </div>
                     </div>
-                  </div>
-                ) : null}
-                {displayedResult?.issues ? (
-                  <div className="ds-img-field">
-                    <div className="ds-img-label">{t("issuesLabel")}</div>
-                    <div className="ds-img-value">
-                      {displayedResult.issues}
+                  ) : null}
+                  {displayedResult?.diagnosis ? (
+                    <div className="ds-img-field">
+                      <div className="ds-img-label">{t("diagnosisLabel")}</div>
+                      <div className="ds-img-value">
+                        {displayedResult.diagnosis}
+                      </div>
                     </div>
-                  </div>
-                ) : null}
-                {displayedResult?.improvements ? (
-                  <div className="ds-img-field">
-                    <div className="ds-img-label">{t("improvementsLabel")}</div>
-                    <div className="ds-img-value">
-                      {displayedResult.improvements}
+                  ) : null}
+                  {displayedResult?.severityIndicator ? (
+                    <div className="ds-img-field">
+                      <div className="ds-img-label">{t("severityIndicatorLabel")}</div>
+                      <div className="ds-img-value">
+                        {(() => {
+                          const sev = displayedResult.severityIndicator;
+                          const sevClass =
+                            sev === "Low"
+                              ? "sev-low"
+                              : sev === "Moderate"
+                                ? "sev-med"
+                                : sev === "High"
+                                  ? "sev-high"
+                                  : sev === "Severe"
+                                    ? "sev-sev"
+                                    : "sev-unknown";
+                          return <span className={`ds-sev-badge ${sevClass}`}>{sev}</span>;
+                        })()}
+                      </div>
                     </div>
-                  </div>
-                ) : null}
-                {displayedResult?.captions && displayedResult.captions.length ? (
-                  <div className="ds-img-field">
-                    <div className="ds-img-label">{t("captionsLabel")}</div>
-                    <div className="ds-img-value">
-                      <ul className="ds-img-captions">
-                        {displayedResult.captions.map((c, idx) => (
-                          <li key={idx}>{c}</li>
-                        ))}
-                      </ul>
+                  ) : null}
+                  {displayedResult?.relevance ? (
+                    <div className="ds-img-field">
+                      <div className="ds-img-label">{t("relevanceLabel")}</div>
+                      <div className="ds-img-value">
+                        {displayedResult.relevance}
+                      </div>
                     </div>
-                  </div>
-                ) : null}
-                {activeResult.parseError && activeResult.rawText ? (
-                  <div className="ds-img-field">
-                    <div className="ds-img-label">{t("rawResponseLabel")}</div>
-                    <div className="ds-img-value ds-img-raw">
-                      {activeResult.rawText}
+                  ) : null}
+                  {displayedResult?.issues ? (
+                    <div className="ds-img-field">
+                      <div className="ds-img-label">{t("issuesLabel")}</div>
+                      <div className="ds-img-value">
+                        {displayedResult.issues}
+                      </div>
                     </div>
-                  </div>
-                ) : null}
-              </>
+                  ) : null}
+                  {displayedResult?.improvements ? (
+                    <div className="ds-img-field">
+                      <div className="ds-img-label">{t("improvementsLabel")}</div>
+                      <div className="ds-img-value">
+                        {displayedResult.improvements}
+                      </div>
+                    </div>
+                  ) : null}
+                  {displayedResult?.captions && displayedResult.captions.length ? (
+                    <div className="ds-img-field">
+                      <div className="ds-img-label">{t("captionsLabel")}</div>
+                      <div className="ds-img-value">
+                        <ul className="ds-img-captions">
+                          {displayedResult.captions.map((c, idx) => (
+                            <li key={idx}>{c}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  ) : null}
+                  {activeResult.parseError && activeResult.rawText ? (
+                    <div className="ds-img-field">
+                      <div className="ds-img-label">{t("rawResponseLabel")}</div>
+                      <div className="ds-img-value ds-img-raw">
+                        {activeResult.rawText}
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              )
             ) : (
               <div className="ds-img-field">
                 <div className="ds-img-label">{t("statusLabel")}</div>
