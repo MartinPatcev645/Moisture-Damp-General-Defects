@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Syne } from "next/font/google";
 import "./globals.css";
+import { I18nProvider } from "@/i18n/I18nProvider";
 
 const syne = Syne({
   variable: "--font-syne",
@@ -23,9 +24,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="pt">
       <body className={`${syne.variable} antialiased`}>
-        {children}
+        <I18nProvider>{children}</I18nProvider>
       </body>
     </html>
   );
