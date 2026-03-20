@@ -1,10 +1,13 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useI18n } from "@/i18n/useI18n";
+import { useLocale, useTranslations } from "next-intl";
+import * as Accordion from "@radix-ui/react-accordion";
+import * as Dialog from "@radix-ui/react-dialog";
 import type { PhotoGuideSceneCard } from "./SectionPhotoGuideScenes";
 import { SECTION_SCENE_CARDS } from "./SectionPhotoGuideScenes";
 import type { AppLang } from "@/i18n/translations";
+import { ThumbBadge } from "@/components/ui/badge";
 
 type SectionPhotoGuideEntry = {
   icon: string; // emoji
@@ -414,7 +417,9 @@ function clampSectionStep(stepIndex: number) {
 }
 
 export default function SectionPhotoGuide({ step }: { step: number }) {
-  const { lang, t } = useI18n();
+  const locale = useLocale();
+  const lang = locale as AppLang;
+  const t = useTranslations();
   const safeStep = clampSectionStep(step);
   const entry = useMemo(() => {
     const list = lang === "pt" ? SECTION_PHOTO_GUIDE_PT : SECTION_PHOTO_GUIDE_EN;
@@ -510,101 +515,111 @@ export default function SectionPhotoGuide({ step }: { step: number }) {
 
   return (
     <div className="ds-photo-guide">
-      <div className="ds-photo-guide-top">
-        <div className="ds-photo-guide-title">
-          <span className="ds-photo-guide-title-text">{t("photoGuideTitle")}</span>
-        </div>
-
-        <button
-          type="button"
-          className="ds-photo-guide-toggle"
-          aria-expanded={!isCollapsed}
-          onClick={() => {
-            setCollapsedByStep((prev) => ({
-              ...prev,
-              [safeStep]: !(prev[safeStep] ?? false),
-            }));
-          }}
-        >
-          <span className="ds-photo-guide-toggle-chevron" aria-hidden>
-            {isCollapsed ? "▸" : "▾"}
-          </span>
-          <span className="ds-photo-guide-toggle-label">
-            {isCollapsed ? t("photoGuideShow") : t("photoGuideHide")}
-          </span>
-        </button>
-      </div>
-
-      <div
-        id={`ds-photo-guide-body-${safeStep}`}
-        className="ds-photo-guide-body"
-        style={{ maxHeight: bodyMaxHeightPx }}
-        aria-hidden={isCollapsed}
+      <Accordion.Root
+        type="single"
+        collapsible
+        value={isCollapsed ? "" : "guide"}
+        onValueChange={(value) => {
+          setCollapsedByStep((prev) => ({
+            ...prev,
+            [safeStep]: !(value === "guide"),
+          }));
+        }}
       >
-        <div className="ds-photo-guide-thumb-gallery">
-          <div className="ds-photo-guide-thumb-grid">
-            {scenes.map((scene) => (
-              <button
-                key={scene.id}
-                type="button"
-                className={[
-                  "ds-photo-guide-thumb-card",
-                  scene.accepted ? "" : "ds-photo-guide-thumb-card--rejected",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-                onClick={() =>
-                  setSelectedSceneIdByStep((prev) => ({
-                    ...prev,
-                    [safeStep]: scene.id,
-                  }))
-                }
-              >
-                <div
-                  className={[
-                    "ds-photo-guide-thumb-badge",
-                    scene.accepted
-                      ? "ds-photo-guide-thumb-badge--ok"
-                      : "ds-photo-guide-thumb-badge--bad",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  aria-hidden
-                >
-                  {scene.accepted ? "✓" : "✕"}
-                </div>
-                <div className="ds-photo-guide-thumb-svg">{scene.svg}</div>
-                <div className="ds-photo-guide-thumb-label">{scene.label}</div>
-              </button>
-            ))}
-          </div>
-          <div className="ds-photo-guide-thumb-help">click any to expand ↓</div>
-        </div>
+        <Accordion.Item value="guide">
+          <div className="ds-photo-guide-top">
+            <div className="ds-photo-guide-title">
+              <span className="ds-photo-guide-title-text">{t("photoGuideTitle")}</span>
+            </div>
 
-        {selectedScene ? (
-          <div className="ds-photo-guide-lightbox-wrap">
-            <div className="ds-photo-guide-lightbox-inner" role="dialog" aria-modal="false">
-              <button
-                type="button"
-                className="ds-photo-guide-lightbox-close"
-                aria-label="Close"
-                onClick={() =>
+            <Accordion.Header>
+              <Accordion.Trigger className="ds-photo-guide-toggle" aria-expanded={!isCollapsed}>
+                <span className="ds-photo-guide-toggle-chevron" aria-hidden>
+                  {isCollapsed ? "▸" : "▾"}
+                </span>
+                <span className="ds-photo-guide-toggle-label">
+                  {isCollapsed ? t("photoGuideShow") : t("photoGuideHide")}
+                </span>
+              </Accordion.Trigger>
+            </Accordion.Header>
+          </div>
+
+          <Accordion.Content
+            id={`ds-photo-guide-body-${safeStep}`}
+            className="ds-photo-guide-body"
+            style={{ maxHeight: bodyMaxHeightPx }}
+            aria-hidden={isCollapsed}
+            forceMount
+          >
+            <div className="ds-photo-guide-thumb-gallery">
+              <div className="grid grid-cols-3 gap-3 max-[520px]:grid-cols-2">
+                {scenes.map((scene) => (
+                  <button
+                    key={scene.id}
+                    type="button"
+                    className={[
+                      "ds-photo-guide-thumb-card",
+                      scene.accepted ? "" : "ds-photo-guide-thumb-card--rejected",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                    onClick={() =>
+                      setSelectedSceneIdByStep((prev) => ({
+                        ...prev,
+                        [safeStep]: scene.id,
+                      }))
+                    }
+                  >
+                    <ThumbBadge accepted={scene.accepted} aria-hidden>
+                      {scene.accepted ? "✓" : "✕"}
+                    </ThumbBadge>
+                    <div className="ds-photo-guide-thumb-svg">{scene.svg}</div>
+                    <div className="ds-photo-guide-thumb-label">{scene.label}</div>
+                  </button>
+                ))}
+              </div>
+              <div className="ds-photo-guide-thumb-help">click any to expand ↓</div>
+            </div>
+
+            <Dialog.Root
+              open={!!selectedScene}
+              onOpenChange={(open) => {
+                if (!open) {
                   setSelectedSceneIdByStep((prev) => ({
                     ...prev,
                     [safeStep]: null,
-                  }))
+                  }));
                 }
-              >
-                ×
-              </button>
-              <div className="ds-photo-guide-lightbox-svg">{selectedScene.svg}</div>
-              <div className="ds-photo-guide-lightbox-title">{selectedScene.lightboxTitle}</div>
-              <div className="ds-photo-guide-lightbox-desc">{selectedScene.description}</div>
-            </div>
-          </div>
-        ) : null}
+              }}
+            >
+              <Dialog.Portal>
+                <Dialog.Overlay className="fixed inset-0 bg-black/50" />
+                <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 p-0 outline-none bg-transparent">
+                  {selectedScene ? (
+                    <div className="ds-photo-guide-lightbox-inner">
+                      <button
+                        type="button"
+                        className="ds-photo-guide-lightbox-close"
+                        aria-label="Close"
+                        onClick={() =>
+                          setSelectedSceneIdByStep((prev) => ({
+                            ...prev,
+                            [safeStep]: null,
+                          }))
+                        }
+                      >
+                        ×
+                      </button>
+                      <div className="ds-photo-guide-lightbox-svg">{selectedScene.svg}</div>
+                      <div className="ds-photo-guide-lightbox-title">{selectedScene.lightboxTitle}</div>
+                      <div className="ds-photo-guide-lightbox-desc">{selectedScene.description}</div>
+                    </div>
+                  ) : null}
+                </Dialog.Content>
+              </Dialog.Portal>
+            </Dialog.Root>
 
-        <div className="ds-photo-guide-grid">
+            <div className="grid grid-cols-2 gap-3 max-[520px]:grid-cols-1 pt-3">
           <div className="ds-photo-guide-block">
             <div className="ds-photo-guide-heading ds-photo-guide-heading--ok">
               {t("photoGuideAcceptedHeading")}
@@ -647,8 +662,10 @@ export default function SectionPhotoGuide({ step }: { step: number }) {
             <div className="ds-photo-guide-tip-heading">{t("photoGuideTipHeading")}</div>
             <div className="ds-photo-guide-tip-text">{entry.tip}</div>
           </div>
-        </div>
-      </div>
+            </div>
+          </Accordion.Content>
+        </Accordion.Item>
+      </Accordion.Root>
     </div>
   );
 }

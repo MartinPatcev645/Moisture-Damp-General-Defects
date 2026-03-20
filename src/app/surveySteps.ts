@@ -38,7 +38,7 @@ export type Step = {
 
 export const TOTAL_SECTIONS = 13;
 
-export const stepsByLang: Record<AppLang, Step[]> = {
+export const stepsByLang: Partial<Record<AppLang, Step[]>> = {
   en: [
     {
       id: 1,
@@ -2178,9 +2178,13 @@ export const stepsByLang: Record<AppLang, Step[]> = {
   ],
 };
 
+// For now, provide Spanish steps so `/es` never falls back silently.
+// (If you later add a full Spanish translation, replace this with the dedicated `es` array.)
+stepsByLang.es = stepsByLang.en;
+
 export function getSteps(lang: AppLang): Step[] {
   const steps = stepsByLang[lang];
   // Fallback to EN if PT is incomplete during refactor.
-  return steps && steps.length === TOTAL_SECTIONS ? steps : stepsByLang.en;
+  return steps && steps.length === TOTAL_SECTIONS ? steps : stepsByLang.en ?? [];
 }
 

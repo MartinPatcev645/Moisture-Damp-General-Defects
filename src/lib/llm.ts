@@ -245,9 +245,10 @@ export async function generateVisionWithFallback(args: {
             }
 
             const err = new Error(`${msg} (model: ${model})`);
-            (err as any).upstreamStatus = res.status;
-            (err as any).retryAfter = retryAfter;
-            throw err;
+            const typedErr = err as Error & { upstreamStatus?: number; retryAfter?: string | null };
+            typedErr.upstreamStatus = res.status;
+            typedErr.retryAfter = retryAfter;
+            throw typedErr;
           }
 
           const text = json ? textFromGemini(json) : "";
@@ -301,9 +302,10 @@ export async function generateVisionWithFallback(args: {
             continue;
           }
           const err = new Error(msg);
-          (err as any).upstreamStatus = res.status;
-          (err as any).retryAfter = retryAfter;
-          throw err;
+          const typedErr = err as Error & { upstreamStatus?: number; retryAfter?: string | null };
+          typedErr.upstreamStatus = res.status;
+          typedErr.retryAfter = retryAfter;
+          throw typedErr;
         }
 
         const text = json ? textFromOpenRouter(json) : "";

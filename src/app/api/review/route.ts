@@ -5,7 +5,21 @@ export const runtime = "nodejs";
 
 type SurveyValue = string | string[] | null;
 type SurveyData = Record<string, SurveyValue>;
-type Lang = "pt" | "en";
+type Lang = "en" | "pt" | "es";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getUpstreamStatus(e: unknown): number | undefined {
+  if (!isRecord(e)) return undefined;
+  return typeof e.upstreamStatus === "number" ? e.upstreamStatus : undefined;
+}
+
+function getRetryAfter(e: unknown): string | null {
+  if (!isRecord(e)) return null;
+  return typeof e.retryAfter === "string" ? e.retryAfter : null;
+}
 
 export async function POST(req: Request) {
   let body: unknown;
@@ -20,13 +34,25 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Body must be { survey: { ... } }." }, { status: 400 });
   }
 
-  const langRaw = (body as any)?.lang as unknown;
-  const lang: Lang = langRaw === "en" || langRaw === "pt" ? (langRaw as Lang) : "pt";
+  const langRaw = (body as { lang?: unknown })?.lang as unknown;
+  const lang: Lang =
+    langRaw === "en" || langRaw === "pt" || langRaw === "es"
+      ? (langRaw as Lang)
+      : "en";
 
   const surveyJson = JSON.stringify(survey, null, 2);
   const headingPattern =
-    lang === "pt" ? `### Secção 01 — <título>` : `### Section 01 — <title>`;
-  const overallHeading = lang === "pt" ? "### Prioridades gerais" : "### Overall priorities";
+    lang === "pt"
+      ? `### Secção 01 — <título>`
+      : lang === "es"
+        ? `### Seccion 01 — <titulo>`
+        : `### Section 01 — <title>`;
+  const overallHeading =
+    lang === "pt"
+      ? "### Prioridades gerais"
+      : lang === "es"
+        ? "### Prioridades generales"
+        : "### Overall priorities";
   const sectionTitles =
     lang === "pt"
       ? [
@@ -44,21 +70,37 @@ export async function POST(req: Request) {
           "12 Inspeções e métodos utilizados",
           "13 Segurança, recomendações e remediação",
         ]
-      : [
-          "01 Basic Building Information",
-          "02 Building Characteristics",
-          "03 External Moisture Ingress Points",
-          "04 Internal Signs of Damp & Mould",
-          "05 Moisture Measurements & Profiling",
-          "06 Ventilation, Humidity & Environment",
-          "07 Types of Damp & Moisture Sources",
-          "08 Timber & Material Defects",
-          "09 Structural & Building Defects",
-          "10 History & Previous Interventions",
-          "11 Risk Assessment & Impacts",
-          "12 Inspections & Methods Used",
-          "13 Safety, Recommendations & Remediation",
-        ];
+      : lang === "es"
+        ? [
+            "01 Informacion basica del edificio",
+            "02 Caracteristicas del edificio",
+            "03 Puntos de entrada de humedad (exterior)",
+            "04 Senales internas de humedad y moho",
+            "05 Mediciones de humedad y perfilado",
+            "06 Ventilacion, humedad y ambiente",
+            "07 Tipos de humedad y fuentes probables",
+            "08 Defectos de madera y materiales",
+            "09 Defectos estructurales y del edificio",
+            "10 Historia y intervenciones anteriores",
+            "11 Evaluacion de riesgos e impactos",
+            "12 Inspecciones y metodos utilizados",
+            "13 Seguridad, recomendaciones y remediacion",
+          ]
+        : [
+            "01 Basic Building Information",
+            "02 Building Characteristics",
+            "03 External Moisture Ingress Points",
+            "04 Internal Signs of Damp & Mould",
+            "05 Moisture Measurements & Profiling",
+            "06 Ventilation, Humidity & Environment",
+            "07 Types of Damp & Moisture Sources",
+            "08 Timber & Material Defects",
+            "09 Structural & Building Defects",
+            "10 History & Previous Interventions",
+            "11 Risk Assessment & Impacts",
+            "12 Inspections & Methods Used",
+            "13 Safety, Recommendations & Remediation",
+          ];
 
   const prompt = `You are an expert damp and moisture building surveyor with 20 years of field experience.
 
@@ -67,7 +109,13 @@ You will be given a completed damp/moisture survey in JSON.
 Your job: produce a professional AI review where **each of the 13 survey sections is reviewed separately** (not a generic overall summary).
 
 OUTPUT RULES (strict):
-- Write the entire output in ${lang === "pt" ? "Portuguese (Portugal)" : "English"}.
+- Write the entire output in ${
+    lang === "pt"
+      ? "Portuguese (Portugal)"
+      : lang === "es"
+        ? "Spanish (Spain)"
+        : "English"
+  }.
 - Use Markdown headings with exactly this pattern for each section: "${headingPattern}"
 - Produce ALL sections 01 through 13, in order, even if data is missing.
 - Under each section heading, write EXACTLY ONE professional paragraph (2–3 sentences). This means the output will contain **13 paragraphs total**, one per section.
@@ -88,10 +136,8 @@ ${surveyJson}`;
     return NextResponse.json({ text, provider });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
-    const upstreamStatus =
-      typeof (e as any)?.upstreamStatus === "number" ? (e as any).upstreamStatus : undefined;
-    const retryAfter =
-      typeof (e as any)?.retryAfter === "string" ? (e as any).retryAfter : null;
+    const upstreamStatus = getUpstreamStatus(e);
+    const retryAfter = getRetryAfter(e);
     return NextResponse.json({ error: msg, upstreamStatus, retryAfter }, { status: 502 });
   }
 }

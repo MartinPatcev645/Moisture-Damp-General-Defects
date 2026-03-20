@@ -1,7 +1,8 @@
 "use client";
 
 import React, { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useI18n } from "@/i18n/useI18n";
+import { useLocale, useTranslations } from "next-intl";
+import { useRouter } from "next/navigation";
 import type { AppLang } from "@/i18n/translations";
 import SectionPhotoGuide from "@/components/SectionPhotoGuide";
 import { getSteps, TOTAL_SECTIONS, type SurveyData, type SurveyValue, type Step } from "./surveySteps";
@@ -33,12 +34,22 @@ type SectionImageState = {
   nextAllowedAt?: number | null;
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 function parseRetryDelayMsFromGeminiError(raw: string): number | null {
   try {
-    const obj = JSON.parse(raw) as any;
-    const retryDelay = obj?.error?.details?.find?.(
-      (d: any) => d?.["@type"] === "type.googleapis.com/google.rpc.RetryInfo",
-    )?.retryDelay as string | undefined;
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed)) return null;
+    const details = isRecord(parsed.error)
+      ? (parsed.error.details as unknown)
+      : undefined;
+    if (!Array.isArray(details)) return null;
+
+    const retryInfo = details.find((d): d is Record<string, unknown> => isRecord(d) && d["@type"] === "type.googleapis.com/google.rpc.RetryInfo");
+    const retryDelay = retryInfo?.retryDelay;
+
     if (typeof retryDelay === "string") {
       const m = retryDelay.match(/^(\d+)(ms|s)$/i);
       if (m) {
@@ -282,7 +293,9 @@ function buildGeminiPrompt(step: Step, data: SurveyData, lang: AppLang): string 
   const outputLang =
     lang === "pt"
       ? "Portuguese (Portugal)"
-      : "English";
+      : lang === "es"
+        ? "Spanish (Spain)"
+        : "English";
   const stepIndex0 = Math.max(0, Math.min(12, step.id - 1));
   const sectionCfg = SECTION_PROMPT[stepIndex0] ?? SECTION_PROMPT[0];
 
@@ -385,7 +398,7 @@ async function callGeminiImageAnalysis(
   const json = (await res.json()) as {
     text?: string;
     rawText?: string;
-    analysis?: any;
+    analysis?: unknown;
     parseError?: string | null;
     error?: string;
   };
@@ -394,23 +407,24 @@ async function callGeminiImageAnalysis(
   const rawText = (json.rawText ?? json.text ?? "").trim() || "No analysis text returned from Gemini.";
   const analysis = json.analysis ?? null;
   if (analysis && typeof analysis === "object") {
+    const rec = analysis as Record<string, unknown>;
     return {
-      topicRelevant: analysis.topicRelevant,
-      rejectionReason: analysis.rejectionReason,
-      description: analysis.description,
-      diagnosis: analysis.diagnosis,
-      relevance: analysis.relevance,
-      issues: analysis.issues,
-      improvements: analysis.improvements,
-      severityIndicator: analysis.severityIndicator,
-      captions: Array.isArray(analysis.captions) ? analysis.captions : [],
+      topicRelevant: typeof rec.topicRelevant === "boolean" ? rec.topicRelevant : undefined,
+      rejectionReason: typeof rec.rejectionReason === "string" ? rec.rejectionReason : undefined,
+      description: typeof rec.description === "string" ? rec.description : undefined,
+      diagnosis: typeof rec.diagnosis === "string" ? rec.diagnosis : undefined,
+      relevance: typeof rec.relevance === "string" ? rec.relevance : undefined,
+      issues: typeof rec.issues === "string" ? rec.issues : undefined,
+      improvements: typeof rec.improvements === "string" ? rec.improvements : undefined,
+      severityIndicator: typeof rec.severityIndicator === "string" ? rec.severityIndicator : undefined,
+      captions: Array.isArray(rec.captions) ? rec.captions.filter((x): x is string => typeof x === "string") : [],
       rawText,
       parseError: json.parseError ?? null,
     };
   }
 
   // Fallback: parse client-side (in case the server hasn't been redeployed yet).
-  let parsed: any;
+  let parsed: unknown;
   try {
     parsed = JSON.parse(rawText);
   } catch {
@@ -432,16 +446,17 @@ async function callGeminiImageAnalysis(
     }
   }
 
+  const rec = isRecord(parsed) ? parsed : {};
   return {
-    topicRelevant: parsed.topicRelevant,
-    rejectionReason: parsed.rejectionReason,
-    description: parsed.description,
-    diagnosis: parsed.diagnosis,
-    relevance: parsed.relevance,
-    issues: parsed.issues,
-    improvements: parsed.improvements,
-    severityIndicator: parsed.severityIndicator,
-    captions: Array.isArray(parsed.captions) ? parsed.captions : [],
+    topicRelevant: typeof rec.topicRelevant === "boolean" ? rec.topicRelevant : undefined,
+    rejectionReason: typeof rec.rejectionReason === "string" ? rec.rejectionReason : undefined,
+    description: typeof rec.description === "string" ? rec.description : undefined,
+    diagnosis: typeof rec.diagnosis === "string" ? rec.diagnosis : undefined,
+    relevance: typeof rec.relevance === "string" ? rec.relevance : undefined,
+    issues: typeof rec.issues === "string" ? rec.issues : undefined,
+    improvements: typeof rec.improvements === "string" ? rec.improvements : undefined,
+    severityIndicator: typeof rec.severityIndicator === "string" ? rec.severityIndicator : undefined,
+    captions: Array.isArray(rec.captions) ? rec.captions.filter((x): x is string => typeof x === "string") : [],
     rawText,
     parseError: null,
   };
@@ -454,10 +469,55 @@ function SectionImageAnalysis({
   step: Step;
   data: SurveyData;
 }) {
-  const { lang, t } = useI18n();
-  const [sections, setSections] = useState<Record<number, SectionImageState>>(
-    {}
-  );
+  const locale = useLocale();
+  const lang = locale as AppLang;
+  const t = useTranslations();
+  const sectionsStorageKey = "ds_survey_sections_v1";
+
+  type PersistedSectionState = {
+    result: ImageAnalysisResult | null;
+    translations?: Partial<Record<AppLang, ImageAnalysisResult>>;
+    outputLang?: AppLang;
+    translating?: boolean;
+    translateError?: string | null;
+    error?: string | null;
+    nextAllowedAt?: number | null;
+  };
+
+  const [sections, setSections] = useState<Record<number, SectionImageState>>(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const raw = sessionStorage.getItem(sectionsStorageKey);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as Record<string, PersistedSectionState>;
+
+      const out: Record<number, SectionImageState> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        const id = Number(k);
+        if (!Number.isFinite(id)) continue;
+
+        const outputLang = (v.outputLang ?? lang) as AppLang;
+        out[id] = {
+          file: null,
+          previewUrl: null,
+          result: v.result ?? null,
+          translations: v.translations ?? {},
+          outputLang,
+          translating: Boolean(v.translating),
+          translateError:
+            typeof v.translateError === "string" || v.translateError === null
+              ? v.translateError
+              : null,
+          loading: false,
+          error: typeof v.error === "string" || v.error === null ? v.error : null,
+          nextAllowedAt: typeof v.nextAllowedAt === "number" ? v.nextAllowedAt : null,
+        };
+      }
+      return out;
+    } catch {
+      return {};
+    }
+  });
   const retryTimersRef = useRef<Record<number, number>>({});
   const lastFileSigRef = useRef<Record<number, string>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -485,6 +545,27 @@ function SectionImageAnalysis({
       },
     }));
   }
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const serialized: Record<string, PersistedSectionState> = {};
+      for (const [id, s] of Object.entries(sections)) {
+        serialized[id] = {
+          result: s.result ?? null,
+          translations: s.translations,
+          outputLang: s.outputLang,
+          translating: Boolean(s.translating),
+          translateError: s.translateError ?? null,
+          error: s.error ?? null,
+          nextAllowedAt: s.nextAllowedAt ?? null,
+        };
+      }
+      sessionStorage.setItem(sectionsStorageKey, JSON.stringify(serialized));
+    } catch {
+      // ignore
+    }
+  }, [sections, sectionsStorageKey]);
 
   function fileSignature(f: File) {
     return `${f.name}:${f.size}:${f.lastModified}:${f.type}`;
@@ -793,7 +874,7 @@ function SectionImageAnalysis({
                 <>
                   <div className="ds-img-actions button-group" style={{ justifyContent: "flex-start", marginBottom: 10 }}>
                     <span className="ds-img-lang-label" style={{ opacity: 0.8 }}>
-                      {outputLang === "en" ? "EN" : "PT"}
+                      {outputLang === "en" ? "EN" : outputLang === "pt" ? "PT" : "ES"}
                     </span>
                     <span className="ai-sep" aria-hidden />
                     <button
@@ -816,10 +897,26 @@ function SectionImageAnalysis({
                     >
                       PT
                     </button>
+                    <button
+                      type="button"
+                      className={`ds-btn ds-btn-ghost btn-ghost ${outputLang === "es" ? "selected" : ""}`}
+                      onClick={() => void translateResult("es")}
+                      disabled={state.translating || !activeResult}
+                      aria-pressed={outputLang === "es"}
+                      title="Traducir a Español"
+                    >
+                      ES
+                    </button>
                     {state.translating ? (
                       <>
                         <span className="ai-sep" aria-hidden />
-                        <span style={{ opacity: 0.85 }}>{outputLang === "pt" ? "A traduzir…" : "Translating…"}</span>
+                        <span style={{ opacity: 0.85 }}>
+                          {outputLang === "pt"
+                            ? "A traduzir..."
+                            : outputLang === "es"
+                              ? "Traduciendo..."
+                              : "Translating..."}
+                        </span>
                       </>
                     ) : null}
                   </div>
@@ -936,7 +1033,10 @@ function SectionImageAnalysis({
 }
 
 export default function Home() {
-  const { lang, setLang, t } = useI18n();
+  const locale = useLocale();
+  const lang = locale as AppLang;
+  const t = useTranslations();
+  const router = useRouter();
   const stepsView: Step[] = useMemo(() => getSteps(lang), [lang]);
 
   const [current, setCurrent] = useState(1);
@@ -945,6 +1045,71 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [aiText, setAiText] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
+
+  const progressStorageKey = "ds_survey_progress_v1";
+  const restoredRef = useRef(false);
+
+  function persistProgress() {
+    try {
+      sessionStorage.setItem(
+        progressStorageKey,
+        JSON.stringify({
+          current,
+          data,
+          isReview,
+          aiText,
+          aiError,
+        }),
+      );
+    } catch {
+      // ignore
+    }
+  }
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = sessionStorage.getItem(progressStorageKey);
+      if (!raw) {
+        restoredRef.current = true;
+        return;
+      }
+      const parsed = JSON.parse(raw) as {
+        current?: unknown;
+        data?: unknown;
+        isReview?: unknown;
+        aiText?: unknown;
+        aiError?: unknown;
+      };
+
+      if (typeof parsed.current === "number") {
+        setCurrent(Math.max(1, Math.min(TOTAL_SECTIONS, Math.floor(parsed.current))));
+      }
+      if (parsed.data && typeof parsed.data === "object") {
+        setData(parsed.data as SurveyData);
+      }
+      if (typeof parsed.isReview === "boolean") {
+        setIsReview(parsed.isReview);
+      }
+      if (typeof parsed.aiText === "string" || parsed.aiText === null) {
+        setAiText(parsed.aiText);
+      }
+      if (typeof parsed.aiError === "string" || parsed.aiError === null) {
+        setAiError(parsed.aiError);
+      }
+    } catch {
+      // ignore
+    } finally {
+      restoredRef.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!restoredRef.current) return;
+    persistProgress();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current, data, isReview, aiText, aiError]);
 
   function normalizeReviewText(raw: string) {
     return raw
@@ -959,7 +1124,8 @@ export default function Home() {
   const pct = Math.round(((current - 1) / TOTAL_SECTIONS) * 100);
   const stepView = stepsView.find((s) => s.id === current)!;
 
-  const fmtSectionPill = (n: number) => t("sectionPill", { n });
+  const fmtSectionPill = (n: number) =>
+    t("sectionPill", { n: String(n).padStart(2, "0") });
   const fmtSectionPlain = (n: number) => t("sectionPlain", { n });
 
   function setChip(key: string, mode: "single" | "multi", value: string) {
@@ -1024,8 +1190,8 @@ export default function Home() {
   }
 
   return (
-    <div className="ds-app">
-      <header className="ds-header">
+    <div className="relative z-[1] mx-auto max-w-[860px] px-5 pt-8 pb-20">
+      <header className="flex items-center gap-4 mb-12">
         <div className="ds-logo" aria-hidden>
           <img src="/logo.png" alt="" className="ds-logo-img" />
         </div>
@@ -1043,10 +1209,11 @@ export default function Home() {
               type="button"
               className={`ds-btn ds-btn-ghost btn-ghost ${lang === "en" ? "selected" : ""}`}
               onClick={() => {
-                setLang("en");
+                persistProgress();
+                router.push("/");
               }}
               aria-pressed={lang === "en"}
-              disabled={false}
+              disabled={lang === "en"}
             >
               EN
             </button>
@@ -1054,12 +1221,25 @@ export default function Home() {
               type="button"
               className={`ds-btn ds-btn-ghost btn-ghost ${lang === "pt" ? "selected" : ""}`}
               onClick={() => {
-                setLang("pt");
+                persistProgress();
+                router.push("/pt");
               }}
               aria-pressed={lang === "pt"}
-              disabled={false}
+              disabled={lang === "pt"}
             >
               PT
+            </button>
+            <button
+              type="button"
+              className={`ds-btn ds-btn-ghost btn-ghost ${lang === "es" ? "selected" : ""}`}
+              onClick={() => {
+                persistProgress();
+                router.push("/es");
+              }}
+              aria-pressed={lang === "es"}
+              disabled={lang === "es"}
+            >
+              ES
             </button>
           </div>
         </div>
@@ -1244,7 +1424,7 @@ export default function Home() {
       )}
 
       {!isReview ? (
-        <div className="ds-nav">
+        <div className="flex items-center justify-between gap-3">
           <button className="ds-btn ds-btn-ghost" type="button" onClick={goBack} disabled={current === 1}>
             {t("back")}
           </button>

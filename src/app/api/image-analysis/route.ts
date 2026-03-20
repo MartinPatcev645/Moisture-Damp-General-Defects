@@ -29,10 +29,25 @@ type ImageAnalysisJson = {
   captions?: string[];
 };
 
-function sanitizeParsedAnalysis(obj: any): ImageAnalysisJson | null {
-  if (!obj || typeof obj !== "object") return null;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
 
-  const rawTopicRelevant = obj.topicRelevant;
+function getUpstreamStatus(e: unknown): number | undefined {
+  if (!isRecord(e)) return undefined;
+  return typeof e.upstreamStatus === "number" ? e.upstreamStatus : undefined;
+}
+
+function getRetryAfter(e: unknown): string | null {
+  if (!isRecord(e)) return null;
+  return typeof e.retryAfter === "string" ? e.retryAfter : null;
+}
+
+function sanitizeParsedAnalysis(obj: unknown): ImageAnalysisJson | null {
+  if (!obj || typeof obj !== "object") return null;
+  const rec = obj as Record<string, unknown>;
+
+  const rawTopicRelevant = rec.topicRelevant;
   const topicRelevant =
     typeof rawTopicRelevant === "boolean"
       ? rawTopicRelevant
@@ -48,33 +63,37 @@ function sanitizeParsedAnalysis(obj: any): ImageAnalysisJson | null {
   if (topicRelevant === false) {
     return {
       topicRelevant: false,
-      rejectionReason: typeof obj.rejectionReason === "string" ? obj.rejectionReason : undefined,
+      rejectionReason: typeof rec.rejectionReason === "string" ? rec.rejectionReason : undefined,
     };
   }
 
   if (topicRelevant === true) {
     return {
       topicRelevant: true,
-      description: typeof obj.description === "string" ? obj.description : undefined,
-      diagnosis: typeof obj.diagnosis === "string" ? obj.diagnosis : undefined,
-      relevance: typeof obj.relevance === "string" ? obj.relevance : undefined,
-      issues: typeof obj.issues === "string" ? obj.issues : undefined,
-      improvements: typeof obj.improvements === "string" ? obj.improvements : undefined,
-      severityIndicator: typeof obj.severityIndicator === "string" ? obj.severityIndicator : undefined,
-      captions: Array.isArray(obj.captions) ? obj.captions.filter((x: any) => typeof x === "string") : undefined,
+      description: typeof rec.description === "string" ? rec.description : undefined,
+      diagnosis: typeof rec.diagnosis === "string" ? rec.diagnosis : undefined,
+      relevance: typeof rec.relevance === "string" ? rec.relevance : undefined,
+      issues: typeof rec.issues === "string" ? rec.issues : undefined,
+      improvements: typeof rec.improvements === "string" ? rec.improvements : undefined,
+      severityIndicator: typeof rec.severityIndicator === "string" ? rec.severityIndicator : undefined,
+      captions: Array.isArray(rec.captions)
+        ? rec.captions.filter((x): x is string => typeof x === "string")
+        : undefined,
     };
   }
 
   // Backward compatibility: older model versions may omit `topicRelevant`.
   return {
-    description: typeof obj.description === "string" ? obj.description : undefined,
-    relevance: typeof obj.relevance === "string" ? obj.relevance : undefined,
-    issues: typeof obj.issues === "string" ? obj.issues : undefined,
-    improvements: typeof obj.improvements === "string" ? obj.improvements : undefined,
-    captions: Array.isArray(obj.captions) ? obj.captions.filter((x: any) => typeof x === "string") : undefined,
-    diagnosis: typeof obj.diagnosis === "string" ? obj.diagnosis : undefined,
-    severityIndicator: typeof obj.severityIndicator === "string" ? obj.severityIndicator : undefined,
-    rejectionReason: typeof obj.rejectionReason === "string" ? obj.rejectionReason : undefined,
+    description: typeof rec.description === "string" ? rec.description : undefined,
+    relevance: typeof rec.relevance === "string" ? rec.relevance : undefined,
+    issues: typeof rec.issues === "string" ? rec.issues : undefined,
+    improvements: typeof rec.improvements === "string" ? rec.improvements : undefined,
+    captions: Array.isArray(rec.captions)
+      ? rec.captions.filter((x): x is string => typeof x === "string")
+      : undefined,
+    diagnosis: typeof rec.diagnosis === "string" ? rec.diagnosis : undefined,
+    severityIndicator: typeof rec.severityIndicator === "string" ? rec.severityIndicator : undefined,
+    rejectionReason: typeof rec.rejectionReason === "string" ? rec.rejectionReason : undefined,
   };
 }
 
@@ -154,10 +173,8 @@ export async function POST(req: Request) {
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
-    const upstreamStatus =
-      typeof (e as any)?.upstreamStatus === "number" ? (e as any).upstreamStatus : undefined;
-    const retryAfter =
-      typeof (e as any)?.retryAfter === "string" ? (e as any).retryAfter : null;
+    const upstreamStatus = getUpstreamStatus(e);
+    const retryAfter = getRetryAfter(e);
     return NextResponse.json({ error: msg, upstreamStatus, retryAfter }, { status: 502 });
   }
 }
